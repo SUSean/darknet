@@ -6,7 +6,9 @@
 #include "box.h"
 #include "demo.h"
 #include "option_list.h"
-
+#ifdef MPI
+#include <mpi.h>
+#endif
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
 #endif
@@ -499,6 +501,19 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
 
 void run_detector(int argc, char **argv)
 {
+#ifdef MPI    
+    //int rank,size;
+
+    MPI_Init(&argc,&argv);
+    //MPI_Comm_size(MPI_COMM_WORLD, &size);
+    //MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    
+    //char processor_name[MPI_MAX_PROCESSOR_NAME];
+    //int name_len;
+    //MPI_Get_processor_name(processor_name, &name_len);
+    
+    //printf("Hello world from node %s, rank %d out of %d processes\n",processor_name, rank, size);
+#endif
     char *prefix = find_char_arg(argc, argv, "-prefix", 0);
     float thresh = find_float_arg(argc, argv, "-thresh", .24);
     float hier_thresh = find_float_arg(argc, argv, "-hier", .5);
@@ -549,4 +564,7 @@ void run_detector(int argc, char **argv)
         char **names = get_labels(name_list);
         demo(cfg, weights, thresh, cam_index, filename, names, classes, frame_skip, prefix, hier_thresh);
     }
+#ifdef MPI
+   MPI_Finalize();
+#endif
 }

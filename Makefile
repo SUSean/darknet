@@ -1,8 +1,8 @@
-GPU=0
+GPU=1
 CUDNN=0
-OPENCV=0
-DEBUG=0
-
+OPENCV=1
+DEBUG=1
+MPI=0
 ARCH= -gencode arch=compute_20,code=[sm_20,sm_21] \
       -gencode arch=compute_30,code=sm_30 \
       -gencode arch=compute_35,code=sm_35 \
@@ -18,6 +18,7 @@ OBJDIR=./obj/
 
 CC=gcc
 NVCC=nvcc 
+MPICC=mpicc
 OPTS=-Ofast
 LDFLAGS= -lm -pthread 
 COMMON= 
@@ -48,6 +49,12 @@ CFLAGS+= -DCUDNN
 LDFLAGS+= -lcudnn
 endif
 
+ifeq ($(MPI), 1)
+COMMON+= -DMPI -I/usr/lib/openmpi/include
+CFLAGS+= -DMPI
+LDFLAGS+= -L/usr/lib/openmpi/lib
+endif 
+
 OBJ=gemm.o utils.o cuda.o convolutional_layer.o list.o image.o activations.o im2col.o col2im.o blas.o crop_layer.o dropout_layer.o maxpool_layer.o softmax_layer.o data.o matrix.o network.o connected_layer.o cost_layer.o parser.o option_list.o darknet.o detection_layer.o captcha.o route_layer.o writing.o box.o nightmare.o normalization_layer.o avgpool_layer.o coco.o dice.o yolo.o detector.o layer.o compare.o classifier.o local_layer.o swag.o shortcut_layer.o activation_layer.o rnn_layer.o gru_layer.o rnn.o rnn_vid.o crnn_layer.o demo.o tag.o cifar.o go.o batchnorm_layer.o art.o region_layer.o reorg_layer.o super.o voxel.o tree.o
 ifeq ($(GPU), 1) 
 LDFLAGS+= -lstdc++ 
@@ -60,11 +67,17 @@ DEPS = $(wildcard src/*.h) Makefile
 all: obj backup results $(EXEC)
 
 $(EXEC): $(OBJS)
+ifeq ($(MPI), 1)
+	$(MPICC) $(COMMON) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+else
 	$(CC) $(COMMON) $(CFLAGS) $^ -o $@ $(LDFLAGS)
-
+endif
 $(OBJDIR)%.o: %.c $(DEPS)
+ifeq ($(MPI), 1)
+	$(MPICC) $(COMMON) $(CFLAGS) -c $< -o $@
+else
 	$(CC) $(COMMON) $(CFLAGS) -c $< -o $@
-
+endif
 $(OBJDIR)%.o: %.cu $(DEPS)
 	$(NVCC) $(ARCH) $(COMMON) --compiler-options "$(CFLAGS)" -c $< -o $@
 
