@@ -4,7 +4,7 @@
 #include "cuda.h"
 #include <stdio.h>
 #include <math.h>
-
+#include <mpi.h>
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -501,10 +501,15 @@ image load_image_cv(char *filename, int channels)
 
 image get_image_from_stream(CvCapture *cap)
 {
-    IplImage* src = cvQueryFrame(cap);
-    if (!src) return make_empty_image(0,0,0);
+    double start;
+	start = MPI_Wtime();
+	IplImage* src = cvQueryFrame(cap);
+    printf("Get frame in %lf seconds.\n",MPI_Witme()-start);
+	if (!src) return make_empty_image(0,0,0);
+	start = MPI_Wtime();
     image im = ipl_to_image(src);
     rgbgr_image(im);
+	printf("Unsigned char to Float in %lf seconds.\n",MPI_Wtime()-start);
     return im;
 }
 

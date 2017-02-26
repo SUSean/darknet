@@ -51,7 +51,10 @@ void *fetch_in_thread(void *ptr)
 	if(!in.data){
 		error("Stream closed.");
 	}
+	double resizeTime;
+	resizeTime = MPI_Wtime();
 	in_s = resize_image(in, net.w, net.h);
+	printf("Resize image in %lf seconds\n",MPI_Wtime()-resizeTime);
 	return 0;
 }
 #ifdef MPI
