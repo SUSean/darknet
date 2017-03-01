@@ -16,7 +16,7 @@
 #define timeTag 3
 #endif
 
-#define FRAMES 4
+#define FRAMES 50
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
 #include "opencv2/imgproc/imgproc_c.h"
@@ -39,28 +39,30 @@ static float fps = 0;
 static float demo_thresh = 0;
 static float demo_hier_thresh = .5;
 
-static float *predictions[FRAMES];
+static float *predictions[3];
 static int demo_index = 0;
 static image images[FRAMES];
 static float *avg;
 static float nms = .4;
 
-void *fetch_in_thread(void *ptr)
+void fetch_frames()
 {
-	in = get_image_from_stream(cap);
-	if(!in.data){
-		error("Stream closed.");
+	for(int i = 0; i < FRAMES; i++){
+		in = get_image_from_stream(cap);
+		if(!in.data){
+			error("Stream closed.");
+		}
+		double resizeTime;
+		resizeTime = MPI_Wtime();
+		in_s = resize_image(in, net.w, net.h);
+		printf("Resize image in %lf seconds\n",MPI_Wtime()-resizeTime);
+		images[i] = in_s;
 	}
-	double resizeTime;
-	resizeTime = MPI_Wtime();
-	in_s = resize_image(in, net.w, net.h);
-	printf("Resize image in %lf seconds\n",MPI_Wtime()-resizeTime);
-	return 0;
 }
 #ifdef MPI
-void detect_frame(layer l,int index)
+void detect_frame(layer l,int index,int frame)
 {
-	//mean_arrays(predictions, FRAMES, l.outputs, avg);
+	mean_arrays(predictions, 3, l.outputs, avg);
 	l.output = predictions[index];
 	if(l.type == DETECTION){
 		get_detection_boxes(l, 1, 1, demo_thresh, probs, boxes, 0);
@@ -75,7 +77,7 @@ void detect_frame(layer l,int index)
 	printf("\nFPS:%.1f\n",fps);
 	printf("Objects:\n\n");
 
-	det = images[index];
+	det = images[frame];
 
 	draw_detections(det, l.w*l.h*l.n, demo_thresh, boxes, probs, demo_names, demo_alphabet, demo_classes);
 }
@@ -159,7 +161,7 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 	int j;
 
 	avg = (float *) calloc(l.outputs, sizeof(float));
-	for(j = 0; j < FRAMES; ++j) predictions[j] = (float *) calloc(l.outputs, sizeof(float));
+	for(j = 0; j < 3; ++j) predictions[j] = (float *) calloc(l.outputs, sizeof(float));
 	for(j = 0; j < FRAMES; ++j) images[j] = make_image(1,1,3);
 
 	boxes = (box *)calloc(l.w*l.h*l.n, sizeof(box));
@@ -185,49 +187,44 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 	int time = 0;
 	int now = 0;
 	int temp;
-	float *prediction = (float *) malloc(l.outputs* sizeof(float));
+	float *X[3];
+	for(j = 0; j < 3; j++) X[j] = (float *)malloc(net.w*net.h*3*sizeof(float));
 	double start,end;
-	pthread_t fetch_thread;
+
 	if(rank == 0){
 		double totalstart = MPI_Wtime(); 
 		double before = MPI_Wtime();
 		double after,curr;
 		int returnRank;
-		if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
+		fetch_frames();
 		while(1){
-			time ++;
-			
 			while(time < size){
-				printf("Frame = %d\n",time);
-				pthread_join(fetch_thread, 0);
-				images[time - 1] = in;
-				det_s = in_s;
-				if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
-				MPI_Send(det_s.data,net.w*net.h*3,MPI_FLOAT,time,frameTag,MPI_COMM_WORLD);
-				MPI_Send(&time,1,MPI_INT,time,timeTag,MPI_COMM_WORLD);
+				printf("Frame = %d\n",time*3);
+				for(j=0;j<3;j++)
+					X[j] = images[time*3+j].data;
+				MPI_Send(X,net.w*net.h*3*3,MPI_FLOAT,time+1,frameTag,MPI_COMM_WORLD);
+				MPI_Send(&time,1,MPI_INT,time+1,timeTag,MPI_COMM_WORLD);
 				printf("Send frame to %d\n",time);
 				time ++;
-				free_image(det_s);
 			}
 			
 			start = MPI_Wtime();
-			MPI_Recv(prediction,l.outputs,MPI_FLOAT,MPI_ANY_SOURCE,predictTag,MPI_COMM_WORLD,&status);
+			MPI_Recv(predictions,l.outputs*3,MPI_FLOAT,MPI_ANY_SOURCE,predictTag,MPI_COMM_WORLD,&status);
 			returnRank=status.MPI_SOURCE;
 			MPI_Recv(&temp,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD,&status);
 			end = MPI_Wtime();
 			printf("Receive prediction from %d in %lf seconds.\n", returnRank, end - start);
 
-			if(temp > now){
-				now = temp;
+			for(j=0; j<3 ;j++){
 				start = MPI_Wtime();
-				memcpy(predictions[returnRank-1], prediction, l.outputs*sizeof(float));
-				detect_frame(l,returnRank - 1);
+				//memcpy(predictions[returnRank-1], prediction, l.outputs*sizeof(float));
+				detect_frame(l,j,time*3+j);
 				disp = det;
 				end = MPI_Wtime();
 				printf("Detect in %lf seconds.\n",end - start);
 				start = MPI_Wtime();
 				if(!prefix){
-   	            	//show_image(disp, "Demo");
+   	            	show_image(disp, "Demo");
                 	int c = cvWaitKey(1);
                    	if (c == 10){
                        	if(frame_skip == 0) frame_skip = 60;
@@ -253,48 +250,39 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 			after = MPI_Wtime();
 			printf("Total time = %lf\n\n\n",after - before);
 			curr = 1./(after - before);
-			fps = curr;
+			fps = curr*3;
 			before = after;
 			
-			//printf("prediction is at %p\n", &prediction);
-			//printf("det_s is at %p\n", &det_s);
-			//printf("image%d is at %p\n", returnRank, &images[returnRank - 1]);
-			//images[returnRank - 1] = make_image(1,1,3);
+			printf("Frame = %d\n",time*3);
 			
 			start = MPI_Wtime();
-			pthread_join(fetch_thread, 0);
-			images[returnRank - 1] = in;
-			det_s = in_s;
-			if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
-			end = MPI_Wtime();
-			printf("Fetch time %lf seconds.\n",end - start);
-			printf("Frame = %d\n",time);
-			
-			start = MPI_Wtime();
-			MPI_Send(det_s.data,net.w*net.h*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD);
+			for(j=0;j<3;j++)
+				X[j] = images[time*3+j].data;
+			MPI_Send(X,net.w*net.h*3*3,MPI_FLOAT,time,frameTag,MPI_COMM_WORLD);
 			MPI_Send(&time,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD);
 			end = MPI_Wtime();
-			free_image(det_s);
 			printf("Send Frame to %d in %lf seconds.\n", returnRank, end - start);
 		}
 		printf("Average fps %lf.\n",(double) time / (MPI_Wtime()-totalstart));
 	}
 	else{
-		float *X  = (float *) malloc(net.w*net.h*3* sizeof(float));
+		float *prediction = (float *) malloc(l.outputs* sizeof(float));
 		while(1){
-			MPI_Recv(X,net.w*net.h*3,MPI_FLOAT,0,frameTag,MPI_COMM_WORLD,&status);
+			MPI_Recv(X,net.w*net.h*3*3,MPI_FLOAT,0,frameTag,MPI_COMM_WORLD,&status);
 			MPI_Recv(&time,1,MPI_INT,0,timeTag,MPI_COMM_WORLD,&status);
 			printf("%d Receive frame\n",rank);
-			start = MPI_Wtime();
-			prediction = network_predict(net, X);
-			end = MPI_Wtime();
-			printf("%d Prediction in %lf seconds.\n", rank, end - start);
-			MPI_Send(prediction,l.outputs,MPI_FLOAT,0,predictTag,MPI_COMM_WORLD);
+			for(j=0;j<3;j++){
+				start = MPI_Wtime();
+				prediction = network_predict(net, X[j]);
+				end = MPI_Wtime();
+				printf("%d Prediction in %lf seconds.\n", rank, end - start);
+				predictions[j] = prediction;
+			}
+			MPI_Send(predictions,l.outputs*3,MPI_FLOAT,0,predictTag,MPI_COMM_WORLD);
 			MPI_Send(&time,1,MPI_INT,0,timeTag,MPI_COMM_WORLD);
 		}
-		free(X);
+		free(prediction);
 	}
-	free(prediction);
 
 #else
 	if(filename){
