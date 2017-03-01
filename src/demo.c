@@ -16,7 +16,7 @@
 #define timeTag 3
 #endif
 
-#define FRAMES 50
+#define FRAMES 48
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
 #include "opencv2/imgproc/imgproc_c.h"
@@ -63,7 +63,7 @@ void fetch_frames()
 void detect_frame(layer l,int index,int frame)
 {
 	mean_arrays(predictions, 3, l.outputs, avg);
-	l.output = predictions[index];
+	l.output = avg;//predictions[index];
 	if(l.type == DETECTION){
 		get_detection_boxes(l, 1, 1, demo_thresh, probs, boxes, 0);
 	} else if (l.type == REGION){
@@ -198,22 +198,22 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 		int returnRank;
 		fetch_frames();
 		while(1){
-			while(time < size){
+			while(time < size-1){
 				printf("Frame = %d\n",time*3);
 				for(j=0;j<3;j++)
 					X[j] = images[time*3+j].data;
-				MPI_Send(X,net.w*net.h*3*3,MPI_FLOAT,time+1,frameTag,MPI_COMM_WORLD);
+				MPI_Send(&X[0][0],net.w*net.h*3*3,MPI_FLOAT,time+1,frameTag,MPI_COMM_WORLD);
 				MPI_Send(&time,1,MPI_INT,time+1,timeTag,MPI_COMM_WORLD);
-				printf("Send frame to %d\n",time);
+				printf("Send frames to %d\n",time+1);
 				time ++;
 			}
 			
 			start = MPI_Wtime();
-			MPI_Recv(predictions,l.outputs*3,MPI_FLOAT,MPI_ANY_SOURCE,predictTag,MPI_COMM_WORLD,&status);
+			MPI_Recv(&predictions[0][0],l.outputs*3,MPI_FLOAT,MPI_ANY_SOURCE,predictTag,MPI_COMM_WORLD,&status);
 			returnRank=status.MPI_SOURCE;
 			MPI_Recv(&temp,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD,&status);
 			end = MPI_Wtime();
-			printf("Receive prediction from %d in %lf seconds.\n", returnRank, end - start);
+			printf("Receive predictions from %d in %lf seconds.\n", returnRank, end - start);
 
 			for(j=0; j<3 ;j++){
 				start = MPI_Wtime();
@@ -258,17 +258,18 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 			start = MPI_Wtime();
 			for(j=0;j<3;j++)
 				X[j] = images[time*3+j].data;
-			MPI_Send(X,net.w*net.h*3*3,MPI_FLOAT,time,frameTag,MPI_COMM_WORLD);
+			MPI_Send(&X[0][0],net.w*net.h*3*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD);
 			MPI_Send(&time,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD);
 			end = MPI_Wtime();
-			printf("Send Frame to %d in %lf seconds.\n", returnRank, end - start);
+			printf("Send Frames to %d in %lf seconds.\n", returnRank, end - start);
+			time++;
 		}
 		printf("Average fps %lf.\n",(double) time / (MPI_Wtime()-totalstart));
 	}
 	else{
 		float *prediction = (float *) malloc(l.outputs* sizeof(float));
 		while(1){
-			MPI_Recv(X,net.w*net.h*3*3,MPI_FLOAT,0,frameTag,MPI_COMM_WORLD,&status);
+			MPI_Recv(&X[0][0],net.w*net.h*3*3,MPI_FLOAT,0,frameTag,MPI_COMM_WORLD,&status);
 			MPI_Recv(&time,1,MPI_INT,0,timeTag,MPI_COMM_WORLD,&status);
 			printf("%d Receive frame\n",rank);
 			for(j=0;j<3;j++){
@@ -278,7 +279,7 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 				printf("%d Prediction in %lf seconds.\n", rank, end - start);
 				predictions[j] = prediction;
 			}
-			MPI_Send(predictions,l.outputs*3,MPI_FLOAT,0,predictTag,MPI_COMM_WORLD);
+			MPI_Send(&predictions[0][0],l.outputs*3,MPI_FLOAT,0,predictTag,MPI_COMM_WORLD);
 			MPI_Send(&time,1,MPI_INT,0,timeTag,MPI_COMM_WORLD);
 		}
 		free(prediction);
