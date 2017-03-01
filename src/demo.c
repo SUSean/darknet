@@ -227,26 +227,26 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 				printf("Detect in %lf seconds.\n",end - start);
 				start = MPI_Wtime();
 				if(!prefix){
-                                	show_image(disp, "Demo");
-                                	int c = cvWaitKey(1);
-                                	if (c == 10){
-                                        	if(frame_skip == 0) frame_skip = 60;
-                                        	else if(frame_skip == 4) frame_skip = 0;
-                                        	else if(frame_skip == 60) frame_skip = 4;
-                               	        	else frame_skip = 0;
-                        	        }
-                	        }else{
-                	                char buff[256];
-        	                        sprintf(buff, "%s_%08d", prefix, time);
-                                	save_image(disp, buff);
-                        	}
-                        	if(delay == 0){
-                                	free_image(disp);
-                        	}
+   	            	//show_image(disp, "Demo");
+                	int c = cvWaitKey(1);
+                   	if (c == 10){
+                       	if(frame_skip == 0) frame_skip = 60;
+                       	else if(frame_skip == 4) frame_skip = 0;
+                       	else if(frame_skip == 60) frame_skip = 4;  
+						else frame_skip = 0;
+                	}
+                }else{
+                    char buff[256];
+                    sprintf(buff, "%s_%08d", prefix, time);
+                   	save_image(disp, buff);
+               	}
+               	if(delay == 0){
+					free_image(disp);
+                }
 				--delay;
-                		if(delay < 0){
-                        		delay = frame_skip;
-                		}
+               	if(delay < 0){
+              		delay = frame_skip;
+              	}
 				end = MPI_Wtime();
 				printf("Display in %lf seconds.\n",end - start);
 			}

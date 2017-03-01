@@ -502,14 +502,14 @@ image load_image_cv(char *filename, int channels)
 image get_image_from_stream(CvCapture *cap)
 {
     double start;
-	start = MPI_Wtime();
-	IplImage* src = cvQueryFrame(cap);
-    printf("Get frame in %lf seconds.\n",MPI_Witme()-start);
-	if (!src) return make_empty_image(0,0,0);
-	start = MPI_Wtime();
+    start = MPI_Wtime();
+    IplImage* src = cvQueryFrame(cap);
+    printf("Get frame in %lf seconds.\n",MPI_Wtime()-start);
+    if (!src) return make_empty_image(0,0,0);
+    start = MPI_Wtime();
     image im = ipl_to_image(src);
     rgbgr_image(im);
-	printf("Unsigned char to Float in %lf seconds.\n",MPI_Wtime()-start);
+    printf("Unsigned char to Float in %lf seconds.\n",MPI_Wtime()-start);
     return im;
 }
 
