@@ -41,7 +41,8 @@ static float demo_hier_thresh = .5;
 
 static float *predictions[FRAMES];
 static int demo_index = 0;
-static image images[FRAMES];
+static image images[100];
+static image origin_images[100];
 static float *avg;
 static float nms = .4;
 
@@ -57,8 +58,23 @@ void *fetch_in_thread(void *ptr)
 	printf("Resize image in %lf seconds\n",MPI_Wtime()-resizeTime);
 	return 0;
 }
+void fetch_frames()
+{
+	for(int i = 0; i < 100; i++){
+		in = get_image_from_stream(cap);
+		if(!in.data){
+			error("Stream closed.");
+		}
+		double resizeTime;
+		resizeTime = MPI_Wtime();
+		in_s = resize_image(in, net.w, net.h);
+		printf("Resize image in %lf seconds\n",MPI_Wtime()-resizeTime);
+		origin_images[i]=in;
+		images[i]=in_s;
+	}
+}
 #ifdef MPI
-void detect_frame(layer l,int index)
+void detect_frame(layer l,int index, int frame)
 {
 	//mean_arrays(predictions, FRAMES, l.outputs, avg);
 	l.output = predictions[index];
@@ -75,7 +91,7 @@ void detect_frame(layer l,int index)
 	printf("\nFPS:%.1f\n",fps);
 	printf("Objects:\n\n");
 
-	det = images[index];
+	det = origin_images[frame];
 
 	draw_detections(det, l.w*l.h*l.n, demo_thresh, boxes, probs, demo_names, demo_alphabet, demo_classes);
 }
@@ -182,32 +198,34 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 			cvResizeWindow("Demo", 1352, 1013);
 		}
 	}
-	int time = 0;
+	int time = -1;
 	int now = 0;
 	int temp;
 	float *prediction = (float *) malloc(l.outputs* sizeof(float));
 	double start,end;
-	pthread_t fetch_thread;
+	//pthread_t fetch_thread;
+	
 	if(rank == 0){
 		double totalstart = MPI_Wtime(); 
 		double before = MPI_Wtime();
 		double after,curr;
 		int returnRank;
-		if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
+		//if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
+		fetch_frames();
 		while(1){
 			time ++;
 			
-			while(time < size){
+			while(time < size-1){
 				printf("Frame = %d\n",time);
-				pthread_join(fetch_thread, 0);
-				images[time - 1] = in;
-				det_s = in_s;
-				if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
-				MPI_Send(det_s.data,net.w*net.h*3,MPI_FLOAT,time,frameTag,MPI_COMM_WORLD);
-				MPI_Send(&time,1,MPI_INT,time,timeTag,MPI_COMM_WORLD);
+				//pthread_join(fetch_thread, 0);
+				//images[time - 1] = in;
+				//det_s = in_s;
+				//if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
+				MPI_Send(images[time].data,net.w*net.h*3,MPI_FLOAT,time+1,frameTag,MPI_COMM_WORLD);
+				MPI_Send(&time,1,MPI_INT,time+1,timeTag,MPI_COMM_WORLD);
 				printf("Send frame to %d\n",time);
 				time ++;
-				free_image(det_s);
+				//free_image(det_s);
 			}
 			
 			start = MPI_Wtime();
@@ -221,7 +239,7 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 				now = temp;
 				start = MPI_Wtime();
 				memcpy(predictions[returnRank-1], prediction, l.outputs*sizeof(float));
-				detect_frame(l,returnRank - 1);
+				detect_frame(l,returnRank-1,temp);
 				disp = det;
 				end = MPI_Wtime();
 				printf("Detect in %lf seconds.\n",end - start);
@@ -262,19 +280,19 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 			//images[returnRank - 1] = make_image(1,1,3);
 			
 			start = MPI_Wtime();
-			pthread_join(fetch_thread, 0);
-			images[returnRank - 1] = in;
-			det_s = in_s;
-			if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
+			//pthread_join(fetch_thread, 0);
+			//images[returnRank - 1] = in;
+			//det_s = in_s;
+			//if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
 			end = MPI_Wtime();
 			printf("Fetch time %lf seconds.\n",end - start);
 			printf("Frame = %d\n",time);
 			
 			start = MPI_Wtime();
-			MPI_Send(det_s.data,net.w*net.h*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD);
+			MPI_Send(images[time].data,net.w*net.h*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD);
 			MPI_Send(&time,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD);
 			end = MPI_Wtime();
-			free_image(det_s);
+			//free_image(det_s);
 			printf("Send Frame to %d in %lf seconds.\n", returnRank, end - start);
 		}
 		printf("Average fps %lf.\n",(double) time / (MPI_Wtime()-totalstart));
