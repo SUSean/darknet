@@ -14,9 +14,15 @@
 #define frameTag 1
 #define predictTag 2
 #define timeTag 3
+#define batch_size 5 
+static float *predictions[batch_size];
+#define FRAMES 48
+#else
+#define FRAMES 4
+static float *predictions[FRAMES];
 #endif
 
-#define FRAMES 48
+
 #ifdef OPENCV
 #include "opencv2/highgui/highgui_c.h"
 #include "opencv2/imgproc/imgproc_c.h"
@@ -39,11 +45,13 @@ static float fps = 0;
 static float demo_thresh = 0;
 static float demo_hier_thresh = .5;
 
-static float *predictions[3];
+
 static int demo_index = 0;
+static image origin_images[FRAMES];
 static image images[FRAMES];
 static float *avg;
 static float nms = .4;
+
 
 void fetch_frames()
 {
@@ -56,14 +64,15 @@ void fetch_frames()
 		resizeTime = MPI_Wtime();
 		in_s = resize_image(in, net.w, net.h);
 		printf("Resize image in %lf seconds\n",MPI_Wtime()-resizeTime);
+		origin_images[i]=in;
 		images[i] = in_s;
 	}
 }
 #ifdef MPI
 void detect_frame(layer l,int index,int frame)
 {
-	mean_arrays(predictions, 3, l.outputs, avg);
-	l.output = avg;//predictions[index];
+	//mean_arrays(predictions, 3, l.outputs, avg);
+	l.output = predictions[index];
 	if(l.type == DETECTION){
 		get_detection_boxes(l, 1, 1, demo_thresh, probs, boxes, 0);
 	} else if (l.type == REGION){
@@ -77,7 +86,7 @@ void detect_frame(layer l,int index,int frame)
 	printf("\nFPS:%.1f\n",fps);
 	printf("Objects:\n\n");
 
-	det = images[frame];
+	det = origin_images[frame];
 
 	draw_detections(det, l.w*l.h*l.n, demo_thresh, boxes, probs, demo_names, demo_alphabet, demo_classes);
 }
@@ -158,11 +167,16 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 	srand(2222222);
 
 	layer l = net.layers[net.n-1];
-	int j;
+	int i,j;
 
 	avg = (float *) calloc(l.outputs, sizeof(float));
-	for(j = 0; j < 3; ++j) predictions[j] = (float *) calloc(l.outputs, sizeof(float));
+#ifdef MPI
+	for(j = 0; j < batch_size; ++j) predictions[j] = (float *) calloc(l.outputs, sizeof(float));
+#elif
+	for(j = 0; j < FRAMES; ++j) predictions[j] = (float *) calloc(l.outputs, sizeof(float));
+#endif
 	for(j = 0; j < FRAMES; ++j) images[j] = make_image(1,1,3);
+	for(j = 0; j < FRAMES; ++j) origin_images[j] = make_image(1,1,3);
 
 	boxes = (box *)calloc(l.w*l.h*l.n, sizeof(box));
 	probs = (float **)calloc(l.w*l.h*l.n, sizeof(float *));
@@ -187,8 +201,8 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 	int time = 0;
 	int now = 0;
 	int temp;
-	float *X[3];
-	for(j = 0; j < 3; j++) X[j] = (float *)malloc(net.w*net.h*3*sizeof(float));
+	float* X = (float *) calloc(net.w*net.h*3*batch_size, sizeof(float));
+	float* prediction = (float *)calloc(l.outputs*batch_size, sizeof(float));
 	double start,end;
 
 	if(rank == 0){
@@ -199,26 +213,30 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 		fetch_frames();
 		while(1){
 			while(time < size-1){
-				printf("Frame = %d\n",time*3);
-				for(j=0;j<3;j++)
-					X[j] = images[time*3+j].data;
-				MPI_Send(&X[0][0],net.w*net.h*3*3,MPI_FLOAT,time+1,frameTag,MPI_COMM_WORLD);
+				printf("Frame = %d\n",time*batch_size);
+				for(i = 0; i < batch_size; i++)
+					for(j = 0; j < net.w*net.h*3; j++)
+						X[i*net.w*net.h*3+j] = images[time*batch_size+i].data[j];
+				MPI_Send(X,batch_size*net.w*net.h*3,MPI_FLOAT,time+1,frameTag,MPI_COMM_WORLD);
 				MPI_Send(&time,1,MPI_INT,time+1,timeTag,MPI_COMM_WORLD);
 				printf("Send frames to %d\n",time+1);
 				time ++;
 			}
 			
 			start = MPI_Wtime();
-			MPI_Recv(&predictions[0][0],l.outputs*3,MPI_FLOAT,MPI_ANY_SOURCE,predictTag,MPI_COMM_WORLD,&status);
+			MPI_Recv(prediction,batch_size*l.outputs,MPI_FLOAT,time%2+1,predictTag,MPI_COMM_WORLD,&status);
+			for(i = 0; i < batch_size; i++)
+				for(j = 0; j < l.outputs; j++)
+					predictions[i][j]=prediction[i*l.outputs+j];
 			returnRank=status.MPI_SOURCE;
 			MPI_Recv(&temp,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD,&status);
 			end = MPI_Wtime();
 			printf("Receive predictions from %d in %lf seconds.\n", returnRank, end - start);
 
-			for(j=0; j<3 ;j++){
+			for(j = 0; j< batch_size; j++){
 				start = MPI_Wtime();
 				//memcpy(predictions[returnRank-1], prediction, l.outputs*sizeof(float));
-				detect_frame(l,j,time*3+j);
+				detect_frame(l,j,temp*batch_size+j);
 				disp = det;
 				end = MPI_Wtime();
 				printf("Detect in %lf seconds.\n",end - start);
@@ -250,15 +268,16 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 			after = MPI_Wtime();
 			printf("Total time = %lf\n\n\n",after - before);
 			curr = 1./(after - before);
-			fps = curr*3;
+			fps = curr*batch_size;
 			before = after;
 			
-			printf("Frame = %d\n",time*3);
+			printf("Frame = %d\n",time*batch_size);
 			
 			start = MPI_Wtime();
-			for(j=0;j<3;j++)
-				X[j] = images[time*3+j].data;
-			MPI_Send(&X[0][0],net.w*net.h*3*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD);
+			for(i = 0;i < batch_size; i++)
+				for(j = 0;j < net.w*net.h*3; j++)
+					X[i*net.w*net.h*3+j] = images[time*batch_size+i].data[j];
+			MPI_Send(X,batch_size*net.w*net.h*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD);
 			MPI_Send(&time,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD);
 			end = MPI_Wtime();
 			printf("Send Frames to %d in %lf seconds.\n", returnRank, end - start);
@@ -267,23 +286,32 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 		printf("Average fps %lf.\n",(double) time / (MPI_Wtime()-totalstart));
 	}
 	else{
-		float *prediction = (float *) malloc(l.outputs* sizeof(float));
+		float *tempprediction = (float *) malloc(l.outputs* sizeof(float));
+		float *Xs[batch_size];
+		for(j = 0; j < batch_size; ++j) Xs[j] = (float *) calloc(net.w*net.h*3, sizeof(float));
 		while(1){
-			MPI_Recv(&X[0][0],net.w*net.h*3*3,MPI_FLOAT,0,frameTag,MPI_COMM_WORLD,&status);
+			MPI_Recv(X,batch_size*net.w*net.h*3,MPI_FLOAT,0,frameTag,MPI_COMM_WORLD,&status);
 			MPI_Recv(&time,1,MPI_INT,0,timeTag,MPI_COMM_WORLD,&status);
 			printf("%d Receive frame\n",rank);
-			for(j=0;j<3;j++){
+			for(i = 0; i < batch_size; i++)
+				for(j = 0 ;j < net.w*net.h*3; j++)
+					Xs[i][j]=X[i*net.w*net.h*3+j];
+			for(i = 0; i < batch_size; i++){
 				start = MPI_Wtime();
-				prediction = network_predict(net, X[j]);
+				tempprediction = network_predict(net, Xs[i]);
 				end = MPI_Wtime();
 				printf("%d Prediction in %lf seconds.\n", rank, end - start);
-				predictions[j] = prediction;
+				for(j=0;j<l.outputs;j++)
+					prediction[i*l.outputs+j]=tempprediction[j];
 			}
-			MPI_Send(&predictions[0][0],l.outputs*3,MPI_FLOAT,0,predictTag,MPI_COMM_WORLD);
+			MPI_Send(prediction,batch_size*l.outputs,MPI_FLOAT,0,predictTag,MPI_COMM_WORLD);
 			MPI_Send(&time,1,MPI_INT,0,timeTag,MPI_COMM_WORLD);
 		}
-		free(prediction);
+		free(tempprediction);
+		for(j = 0; j < 3; ++j) free(Xs[j]);
 	}
+	free(X);
+	free(prediction);
 
 #else
 	if(filename){
