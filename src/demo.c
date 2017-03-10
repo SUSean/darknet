@@ -203,29 +203,22 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 	int temp;
 	float *prediction = (float *) malloc(l.outputs* sizeof(float));
 	double start,end;
-	//pthread_t fetch_thread;
 	
 	if(rank == 0){
 		double totalstart = MPI_Wtime(); 
 		double before = MPI_Wtime();
 		double after,curr;
 		int returnRank;
-		//if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
 		fetch_frames();
 		while(1){
 			time ++;
 			
 			while(time < size-1){
 				printf("Frame = %d\n",time);
-				//pthread_join(fetch_thread, 0);
-				//images[time - 1] = in;
-				//det_s = in_s;
-				//if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
 				MPI_Isend(images[time].data,net.w*net.h*3,MPI_FLOAT,time+1,frameTag,MPI_COMM_WORLD,&req);
 				MPI_Isend(&time,1,MPI_INT,time+1,timeTag,MPI_COMM_WORLD,&req);
 				printf("Send frame to %d\n",time);
 				time ++;
-				//free_image(det_s);
 			}
 			
 			start = MPI_Wtime();
@@ -235,6 +228,12 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 			end = MPI_Wtime();
 			printf("Receive prediction from %d in %lf seconds.\n", returnRank, end - start);
 
+			start = MPI_Wtime();
+			MPI_Isend(images[time].data,net.w*net.h*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD,&req);
+			MPI_Isend(&time,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD,&req);
+			end = MPI_Wtime();
+			printf("Send Frame to %d in %lf seconds.\n", returnRank, end - start);
+			
 			if(temp > now){
 				now = temp;
 				start = MPI_Wtime();
@@ -274,41 +273,30 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 			fps = curr;
 			before = after;
 			
-			//printf("prediction is at %p\n", &prediction);
-			//printf("det_s is at %p\n", &det_s);
-			//printf("image%d is at %p\n", returnRank, &images[returnRank - 1]);
-			//images[returnRank - 1] = make_image(1,1,3);
-			
-			start = MPI_Wtime();
-			//pthread_join(fetch_thread, 0);
-			//images[returnRank - 1] = in;
-			//det_s = in_s;
-			//if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
-			end = MPI_Wtime();
-			printf("Fetch time %lf seconds.\n",end - start);
 			printf("Frame = %d\n",time);
 			
-			start = MPI_Wtime();
-			MPI_Isend(images[time].data,net.w*net.h*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD,&req);
-			MPI_Isend(&time,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD,&req);
-			end = MPI_Wtime();
-			//free_image(det_s);
-			printf("Send Frame to %d in %lf seconds.\n", returnRank, end - start);
 		}
 		printf("Average fps %lf.\n",(double) time / (MPI_Wtime()-totalstart));
 	}
 	else{
 		float *X  = (float *) malloc(net.w*net.h*3* sizeof(float));
 		while(1){
+			start = MPI_Wtime();
 			MPI_Recv(X,net.w*net.h*3,MPI_FLOAT,0,frameTag,MPI_COMM_WORLD,&status);
 			MPI_Recv(&time,1,MPI_INT,0,timeTag,MPI_COMM_WORLD,&status);
 			printf("%d Receive frame\n",rank);
+			end = MPI_Wtime();
+			printf("%d Receive frame in %lf seconds.\n", rank, end - start);
 			start = MPI_Wtime();
 			prediction = network_predict(net, X);
 			end = MPI_Wtime();
 			printf("%d Prediction in %lf seconds.\n", rank, end - start);
+			start = MPI_Wtime();
 			MPI_Send(prediction,l.outputs,MPI_FLOAT,0,predictTag,MPI_COMM_WORLD);
 			MPI_Send(&time,1,MPI_INT,0,timeTag,MPI_COMM_WORLD);
+			end = MPI_Wtime();
+			printf("%d Send Prediction in %lf seconds.\n", rank, end - start);
+
 		}
 		free(X);
 	}
