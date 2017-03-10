@@ -221,8 +221,8 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 				//images[time - 1] = in;
 				//det_s = in_s;
 				//if(pthread_create(&fetch_thread, 0, fetch_in_thread, 0)) error("Thread creation failed");
-				MPI_Send(images[time].data,net.w*net.h*3,MPI_FLOAT,time+1,frameTag,MPI_COMM_WORLD);
-				MPI_Send(&time,1,MPI_INT,time+1,timeTag,MPI_COMM_WORLD);
+				MPI_Isend(images[time].data,net.w*net.h*3,MPI_FLOAT,time+1,frameTag,MPI_COMM_WORLD,&req);
+				MPI_Isend(&time,1,MPI_INT,time+1,timeTag,MPI_COMM_WORLD,&req);
 				printf("Send frame to %d\n",time);
 				time ++;
 				//free_image(det_s);
@@ -289,8 +289,8 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 			printf("Frame = %d\n",time);
 			
 			start = MPI_Wtime();
-			MPI_Send(images[time].data,net.w*net.h*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD);
-			MPI_Send(&time,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD);
+			MPI_Isend(images[time].data,net.w*net.h*3,MPI_FLOAT,returnRank,frameTag,MPI_COMM_WORLD,&req);
+			MPI_Isend(&time,1,MPI_INT,returnRank,timeTag,MPI_COMM_WORLD,&req);
 			end = MPI_Wtime();
 			//free_image(det_s);
 			printf("Send Frame to %d in %lf seconds.\n", returnRank, end - start);
