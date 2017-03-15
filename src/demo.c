@@ -14,9 +14,9 @@
 #define frameTag 1
 #define predictTag 2
 #define timeTag 3
-#define batch_size 5 
+#define batch_size 3 
 static float *predictions[batch_size];
-#define FRAMES 48
+#define FRAMES 100
 #else
 #define FRAMES 4
 static float *predictions[FRAMES];
@@ -224,7 +224,7 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 			}
 			
 			start = MPI_Wtime();
-			MPI_Recv(prediction,batch_size*l.outputs,MPI_FLOAT,time%2+1,predictTag,MPI_COMM_WORLD,&status);
+			MPI_Recv(prediction,batch_size*l.outputs,MPI_FLOAT,time%(size - 1) + 1,predictTag,MPI_COMM_WORLD,&status);
 			for(i = 0; i < batch_size; i++)
 				for(j = 0; j < l.outputs; j++)
 					predictions[i][j]=prediction[i*l.outputs+j];
@@ -242,7 +242,7 @@ void demo(char *cfgfile, char *weightfile, float thresh, int cam_index, const ch
 				printf("Detect in %lf seconds.\n",end - start);
 				start = MPI_Wtime();
 				if(!prefix){
-   	            	show_image(disp, "Demo");
+   	            	//show_image(disp, "Demo");
                 	int c = cvWaitKey(1);
                    	if (c == 10){
                        	if(frame_skip == 0) frame_skip = 60;
